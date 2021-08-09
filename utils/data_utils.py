@@ -39,8 +39,11 @@ def gen_training_examples(batch, max_triplets_num):
 
 def get_word_vec_semeval(data_path):
     word_vec = np.load(data_path)
-    marker_emb = word_vec.mean()
+    marker_emb = word_vec.mean(axis=0)
     marker_emb = np.expand_dims(marker_emb, axis=0)
     marker_emb = np.repeat(marker_emb, repeats=4, axis=0)
     word_vec = np.concatenate((word_vec, marker_emb), axis=0)
     return torch.from_numpy(word_vec)
+
+if __name__ == "__main__":
+    get_word_vec_semeval("/home/wh/pretrain/glove.6B.300d/glove.6B.300d.npy")

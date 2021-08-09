@@ -78,7 +78,9 @@ class SentenceClassificationDataset(Dataset):
                 cur_data["token"].insert(first_pos[0], "<e1>")
 
                 cur_data["ids"], cur_data["mask"] = tokenizer.tokenize(cur_data["token"])
-                cur_data["label"] = self.rel2id(cur_data["relation"])
+                cur_data["label"] = self.rel2id[cur_data["relation"]]
+
+                self.data.append(cur_data)
 
     def __getitem__(self, idx):
         return self.data[idx]
@@ -109,8 +111,8 @@ def collate_fn_semeval(batch):
     label = []
     for item in batch:
         ids.append(item["ids"])
-        masks.append(item["masks"])
-        label.append([item["label"]])
+        masks.append(item["mask"])
+        label.append(item["label"])
     ids = torch.tensor(ids, dtype=torch.long)
     masks = torch.tensor(masks, dtype=torch.long)
     label = torch.tensor(label, dtype=torch.long)
@@ -121,6 +123,6 @@ def collate_fn_ssl_semeval(batch):
     strong_data, weak_data = zip(*batch)
     strong_ids, strong_masks, strong_label = collate_fn_semeval(strong_data)
     weak_ids, weak_masks, weak_label = collate_fn_semeval(weak_data)
-    ssl_ids = torch.stack((strong_ids, weak_ids), dim=0)
-    ssl_masks = torch.stack((strong_masks, weak_masks), dim=0)
+    ssl_ids = torch.cat((strong_ids, weak_ids), dim=0)
+    ssl_masks = torch.cat((strong_masks, weak_masks), dim=0)
     return ssl_ids, ssl_masks

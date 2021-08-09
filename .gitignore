@@ -3,5 +3,6 @@
 /test/
 /settings.py
 /data
+/result
 *.pyc
 *.log
