@@ -14,12 +14,16 @@ def translate(query, source_lan, target_lan):
     para["appid"] = translation_id
     para["salt"] = salt
     para["sign"] = sign
-    return requests.get(translation_url, params=para)
+    res = requests.get(translation_url, params=para).json()
+    # print(res)
+    return res["trans_result"][0]["dst"]
 
 
 if __name__ == "__main__":
     # print(json.dumps(translate("hello world", "en", "zh")))
+    a = "在麻省理工学院林肯实验室，我们一直在开发E0 $ E1。"
+    # print(translate("E1 ( E2 ) is a key problem in E3 ( E4 ) .", "en", "zh"))
+    print(translate(a, "zh", "en"))
 
-    print(translate("hello world", "en", "zh").json())
 
 
