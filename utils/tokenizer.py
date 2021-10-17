@@ -23,24 +23,22 @@ class BertSentenceTokenizer:
 
 
 class GloveSentenceTokenizer:
-    def __init__(self, vocab_path, max_len, pad_token="[PAD]", unk_token="[UNK]"):
-        vocab_file = open(vocab_path, encoding="utf-8")
-        self.vocab = json.load(vocab_file)
-        vocab_file.close()
+    def __init__(self, word2id, max_len, pad_token="[PAD]", unk_token="[UNK]", cascade=False):
+        self.vocab = word2id
         self.max_len = max_len
         self.pad_token = pad_token
         self.unk_token = unk_token
-
-        self.vocab["<e1>"] = len(self.vocab)
-        self.vocab["<e2>"] = len(self.vocab)
-        self.vocab["</e1>"] = len(self.vocab)
-        self.vocab["</e2>"] = len(self.vocab)
+        self.cascade = cascade
 
     def tokenize(self, input_tokens):
         input_ids = []
         for token in input_tokens:
-            if token in self.vocab:
-                input_ids.append(self.vocab[token])
+            if not self.cascade:
+                cur_token = token.lower()
+            else:
+                cur_token = token
+            if cur_token in self.vocab:
+                input_ids.append(self.vocab[cur_token])
             else:
                 input_ids.append(self.vocab[self.unk_token])
 

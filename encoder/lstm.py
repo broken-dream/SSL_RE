@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class BiLSTMEncoder(nn.Module):
-    def __init__(self, embedding, config, padding_idx=400001):
+    def __init__(self, embedding, config, padding_idx=0):
         super().__init__()
         self.embedding = nn.Embedding.from_pretrained(
             embeddings=embedding,

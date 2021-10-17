@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import torch
-
+from tqdm import tqdm
 
 def get_max_triplet(batch):
     # get instance with most triplets in current batch
@@ -37,13 +37,38 @@ def gen_training_examples(batch, max_triplets_num):
                 pass
 
 
-def get_word_vec_semeval(data_path):
-    word_vec = np.load(data_path)
-    marker_emb = word_vec.mean(axis=0)
+def get_word_vec_semeval(data_path, dim):
+    data = []
+    word2id = dict()
+
+    word2id["[PAD]"] = len(word2id)
+    word2id["[UNK]"] = len(word2id)
+    word2id["<e1>"] = len(word2id)
+    word2id["</e1>"] = len(word2id)
+    word2id["<e2>"] = len(word2id)
+    word2id["</e2>"] = len(word2id)
+    idx = len(word2id)
+    with open(data_path, encoding="utf-8") as f:
+        for line in tqdm(f):
+            cur_emb = line.split()
+            word = "".join(cur_emb[0:-dim])
+            word2id[word] = idx
+            data.append(list(map(float,cur_emb[-dim:])))
+            idx += 1
+            if idx > 600000:
+                break
+    word_emb = np.array(data)
+
+    print(word_emb.shape)
+    pad_emb = np.zeros((1, word_emb.shape[-1]))
+    marker_emb = word_emb.mean(axis=0)
     marker_emb = np.expand_dims(marker_emb, axis=0)
-    marker_emb = np.repeat(marker_emb, repeats=4, axis=0)
-    word_vec = np.concatenate((word_vec, marker_emb), axis=0)
-    return torch.from_numpy(word_vec)
+    marker_emb = np.repeat(marker_emb, repeats=5, axis=0)
+
+    word_emb = np.concatenate((pad_emb, marker_emb, word_emb), axis=0)
+    return word2id, torch.from_numpy(word_emb)
+
+
 
 if __name__ == "__main__":
     get_word_vec_semeval("/home/wh/pretrain/glove.6B.300d/glove.6B.300d.npy")

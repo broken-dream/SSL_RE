@@ -4,5 +4,6 @@
 /settings.py
 /data
 /result
+/scirpts
 *.pyc
 *.log

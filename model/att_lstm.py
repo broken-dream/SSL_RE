@@ -13,7 +13,8 @@ class AttLSTM(nn.Module):
         self.linear = nn.Linear(
             in_features=self.encoder.hidden_size,
             out_features=self.class_num,
-            bias=True
+            # bias=True
+            bias=False
         )
         self.tanh = nn.Tanh()
         self.att_weight = torch.nn.Parameter(torch.randn(1, self.encoder.hidden_size, 1))

@@ -1,5 +1,5 @@
 import json
-
+import copy
 import torch
 from torch.utils.data import Dataset, DataLoader
 from utils.data_utils import get_max_triplet
@@ -126,3 +126,18 @@ def collate_fn_ssl_semeval(batch):
     ssl_ids = torch.cat((strong_ids, weak_ids), dim=0)
     ssl_masks = torch.cat((strong_masks, weak_masks), dim=0)
     return ssl_ids, ssl_masks
+
+def collate_fn_mt_semeval(batch):
+    ids = []
+    masks = []
+    label = []
+    for item in batch:
+        ids.append(item["ids"])
+        masks.append(item["mask"])
+        label.append(item["label"])
+    ema_ids = torch.tensor(copy.deepcopy(ids), dtype=torch.long)
+    ema_masks = torch.tensor(copy.deepcopy(masks), dtype=torch.long)
+    ids = torch.tensor(ids, dtype=torch.long)
+    masks = torch.tensor(masks, dtype=torch.long)
+    label = torch.tensor(label, dtype=torch.long)
+    return ids, masks,ema_ids, ema_masks, label
