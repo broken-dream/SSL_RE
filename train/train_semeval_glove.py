@@ -18,6 +18,8 @@ import numpy as np
 
 from encoder.lstm import BiLSTMEncoder
 from model.att_lstm import AttLSTM
+from model.soft_match import SoftMatch
+from model.soft_att_lstm import SoftAttLSTM
 from utils.tokenizer import GloveSentenceTokenizer
 from utils.dataset import SSLDataset, SentenceClassificationDataset, collate_fn_semeval, collate_fn_ssl_semeval, collate_fn_mt_semeval
 from utils.data_utils import get_word_vec_semeval
@@ -379,6 +381,187 @@ def pseudo_label(args):
     logger.info("best res epoch: {}".format(best_epoch))
     data_log.close()
 
+def merger_logits(args):
+    # load pretrain
+    word2id, word_vec = get_word_vec_semeval(args.glove_vec_path, args.word_emb_dim)
+
+    # for debug
+    id2word = dict([(v, k) for k, v in word2id.items()])
+
+    # data
+    tokenizer = GloveSentenceTokenizer(word2id=word2id,
+                                       max_len=args.max_len,
+                                       cascade=args.cascade)
+
+    labeled_dataset = SentenceClassificationDataset(file_path=args.labeled_path,
+                                                    rel2id_path=args.rel2id_path,
+                                                    tokenizer=tokenizer)
+
+    weak_dataset = SentenceClassificationDataset(file_path=args.weak_path,
+                                                 rel2id_path=args.rel2id_path,
+                                                 tokenizer=tokenizer)
+
+    strong_dataset = SentenceClassificationDataset(file_path=args.strong_path,
+                                                   rel2id_path=args.rel2id_path,
+                                                   tokenizer=tokenizer)
+
+    unlabeled_dataset = SSLDataset(strong_data=strong_dataset,
+                                   weak_data=weak_dataset)
+
+    val_dataset = SentenceClassificationDataset(file_path=args.val_path,
+                                                rel2id_path=args.rel2id_path,
+                                                tokenizer=tokenizer)
+
+    labeled_dataloader = DataLoader(dataset=labeled_dataset,
+                                    sampler=RandomSampler(labeled_dataset),
+                                    batch_size=args.batch_size,
+                                    num_workers=args.num_workers,
+                                    drop_last=True,
+                                    collate_fn=collate_fn_semeval)
+
+    unlabeled_dataloader = DataLoader(dataset=unlabeled_dataset,
+                                      sampler=RandomSampler(unlabeled_dataset),
+                                      batch_size=args.unlabeled_batch_size,
+                                      num_workers=args.num_workers,
+                                      drop_last=True,
+                                      collate_fn=collate_fn_ssl_semeval)
+
+    val_loader = DataLoader(dataset=val_dataset,
+                            sampler=RandomSampler(val_dataset),
+                            batch_size=args.batch_size,
+                            num_workers=args.num_workers,
+                            collate_fn=collate_fn_semeval)
+
+    # model
+    encoder = BiLSTMEncoder(word_vec, args)
+    model = SoftAttLSTM(encoder, args)
+    soft_matcher = SoftMatch(args)
+
+    # use gpu
+    if args.use_gpu and torch.cuda.is_available():
+        model.cuda()
+        soft_matcher.cuda()
+
+    # optimizer
+    optimizer = optim.Adadelta(params=model.parameters(),
+                               lr=args.lr,
+                               weight_decay=args.weight_decay)
+    shceduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
+
+    best_metric = 0
+    best_epoch = 0
+    args.epoch = math.ceil(args.total_steps / args.eval_step)
+
+    train_labeled_loader = iter(labeled_dataloader)
+    train_unlabeled_loader = iter(unlabeled_dataloader)
+
+    logger.info("-------------start traing-------------")
+    logger.info("train_path: {}".format(args.labeled_path))
+    logger.info("number of labeled data: {}".format(args.num_labeled))
+    logger.info("batch size: {}".format(args.batch_size))
+    logger.info("total epochs: {}".format(args.epoch))
+    logger.info("total steps: {}".format(args.total_steps))
+    logger.info("--------------------------------------")
+    # train
+    model.zero_grad()
+    model.train()
+    for epoch in range(args.epoch):
+        for batch_idx in tqdm(range(args.eval_step)):
+            try:
+                labeled_data = next(train_labeled_loader)
+            except:
+                train_labeled_loader = iter(labeled_dataloader)
+                labeled_data = next(train_labeled_loader)
+
+            try:
+                unlabeled_data = next(train_unlabeled_loader)
+            except:
+                train_unlabeled_loader = iter(unlabeled_dataloader)
+                unlabeled_data = next(train_unlabeled_loader)
+
+            inputs_x = torch.cat((labeled_data["ids"], unlabeled_data["idx"]), dim=0)
+            inputs_mask = torch.cat((labeled_data["masks"], unlabeled_data["masks"]), dim=0)
+
+            for i in range(min(args.batch_size, 10)):
+                # print_data(labeled_x[i], labeled_mask[i], labeled_y[i], id2word)
+                # print_data(unlabeled_x[i], unlabeled_mask[i], labeled_y[i], id2word)
+                # print_data(unlabeled_x[i+args.batch_size], unlabeled_mask[i+args.batch_size], labeled_y[i], id2word)
+                print("*****************************************************", file=data_log)
+
+            if args.use_gpu and torch.cuda.is_available():
+                inputs_x = inputs_x.cuda()
+                inputs_mask = inputs_mask.cuda()
+                labeled_y = labeled_y.cuda()
+
+            # print(inputs_x.dtype)
+            # print(inputs_mask.dtype)
+
+            optimizer.zero_grad()
+            logits, embedding = model(inputs_x, inputs_mask)
+            logits_labeled = logits[:args.batch_size]
+            logits_strong, logits_weak = logits[args.batch_size:].chunk(2)
+
+            embedding_labeled = logits[:args.batch_size]
+            embedding_strong, embedding_weak = logits[args.batch_size:].chunk(2)
+            del embedding
+
+            if epoch >= args.warmup_epoch:
+                soft_matcher.update_memory(labeled_data["sen_idx"], embedding_labeled, logits_labeled)
+                logits_weak = soft_matcher.update_logits(embedding_weak, logits_weak)
+
+            # labeled loss
+            loss_labeled = F.cross_entropy(logits_labeled, labeled_y, reduction="mean")
+
+            # unlabeled loss
+            pseudo_label = torch.softmax(logits_weak.detach() / args.temperature, dim=-1)
+            max_probs, unlabeled_y = torch.max(pseudo_label, dim=-1)
+            data_mask = max_probs.ge(args.threshold).float()
+            loss_unlabeled = (F.cross_entropy(logits_strong, unlabeled_y, reduction="none") * data_mask).mean()
+
+            if epoch >= args.warmup_epoch:
+                loss = loss_labeled + args.lambda_u * loss_unlabeled
+            else:
+                loss = loss_labeled
+
+            loss.backward()
+            optimizer.step()
+        shceduler.step()
+
+        # eval_res = test(args, val_loader, model)
+        eval_res, cur_threshold = dev(args, val_loader, model)
+
+        logger.info("epoch: {}".format(epoch))
+        logger.info("loss: {}".format(loss))
+        for k, v in eval_res.items():
+            logger.info("{}: {}".format(k, v))
+
+        if eval_res[args.metric] > best_metric:
+            best_metric = eval_res[args.metric]
+            if not os.path.exists(args.save_dir):
+                os.makedirs(args.save_dir)
+            torch.save({"state_dict": model.state_dict()}, args.save_dir + "/best_checkpoint")
+            logger.info("Best checkpoint")
+            best_epoch = epoch
+            best_threshold = cur_threshold
+        logger.info("best_threshold: {}".format(best_threshold))
+
+    logger.info("-------------finished-------------")
+    logger.info("best {}: {}".format(args.metric, best_metric))
+    logger.info("best res epoch: {}".format(best_epoch))
+    data_log.close()
+
+    test_dataset = SentenceClassificationDataset(file_path=args.test_path,
+                                                 rel2id_path=args.rel2id_path,
+                                                 tokenizer=tokenizer)
+    test_dataloader = DataLoader(dataset=test_dataset,
+                                 sampler=SequentialSampler(test_dataset),
+                                 batch_size=args.batch_size,
+                                 num_workers=args.num_workers,
+                                 drop_last=False,
+                                 collate_fn=collate_fn_semeval)
+    test_res, t = dev(args, test_dataloader, model, best_threshold=best_threshold)
+    logger.info("test f1:{}".format(test_res[args.metric]))
+
 def train(args):
     # load pretrain
     word2id, word_vec = get_word_vec_semeval(args.glove_vec_path, args.word_emb_dim)
@@ -464,24 +647,24 @@ def train(args):
     for epoch in range(args.epoch):
         for batch_idx in tqdm(range(args.eval_step)):
             try:
-                labeled_x, labeled_mask, labeled_y = next(train_labeled_loader)
+                labeled_data = next(train_labeled_loader)
             except :
                 train_labeled_loader = iter(labeled_dataloader)
-                labeled_x, labeled_mask, labeled_y = next(train_labeled_loader)
+                labeled_data = next(train_labeled_loader)
 
             try:
-                unlabeled_x, unlabeled_mask = next(train_unlabeled_loader)
+                unlabeled_data = next(train_unlabeled_loader)
             except:
                 train_unlabeled_loader = iter(unlabeled_dataloader)
-                unlabeled_x, unlabeled_mask = next(train_unlabeled_loader)
+                unlabeled_data = next(train_unlabeled_loader)
             
-            inputs_x = torch.cat((labeled_x, unlabeled_x), dim=0)
-            inputs_mask = torch.cat((labeled_mask, unlabeled_mask), dim=0)
+            inputs_x = torch.cat((labeled_data["ids"], unlabeled_data["idx"]), dim=0)
+            inputs_mask = torch.cat((labeled_data["masks"], unlabeled_data["masks"]), dim=0)
 
             for i in range(min(args.batch_size, 10)):
-                print_data(labeled_x[i], labeled_mask[i], labeled_y[i], id2word)
-                print_data(unlabeled_x[i], unlabeled_mask[i], labeled_y[i], id2word)
-                print_data(unlabeled_x[i+args.batch_size], unlabeled_mask[i+args.batch_size], labeled_y[i], id2word)
+                #print_data(labeled_x[i], labeled_mask[i], labeled_y[i], id2word)
+                #print_data(unlabeled_x[i], unlabeled_mask[i], labeled_y[i], id2word)
+                #print_data(unlabeled_x[i+args.batch_size], unlabeled_mask[i+args.batch_size], labeled_y[i], id2word)
                 print("*****************************************************", file=data_log)
             
 
@@ -822,6 +1005,9 @@ if __name__ == "__main__":
     parser.add_argument("--consistency", default=None, type=float)
     parser.add_argument("--consistency-type", default="mse")
     parser.add_argument("--consistency_rampup", default=5)
+
+    # arguments for merger logits
+    parser.add_argument("--labeled_weight", default=0.3, type=float)
 
 
 

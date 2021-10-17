@@ -93,6 +93,6 @@ if __name__ == "__main__":
     dic = json.load(dic_file)
     dic_file.close()
     aug = WeakAugment(dic)
-    weak_aug_semeval("../data/processed_semeval/train.json", "../data/weak_semeval/train.json", aug)
+    weak_aug_semeval("../data/nero_train.json", "../data/weak_train_1.json", aug)
     # weak_aug_semeval("../data/processed_semeval/test.json", "../data/weak_semeval/test.json", aug)
     # weak_aug_semeval("../data/processed_semeval/val.json", "../data/weak_semeval/val.json", aug)

@@ -4,6 +4,7 @@ from augmentation.translation import translate
 import time
 import tqdm
 
+error_ids = []
 
 def tokens2str(tokens):
     res = ""
@@ -64,10 +65,12 @@ def replace_ent_marker(tokens, ner_tokens, ner_pos_list):
             ent_index_pos.append((i, len(tokens)-1, "E{}".format(i)))
             print("sentence has error")
             print(tokens)
+            error_ids.append(i)
             error_flag = True
 
     # replace marker from left to right
     ent_index_pos.sort(key=lambda x: x[1])
+
 
     for item in ent_index_pos:
         marker_pos = tokens.index(item[2])
@@ -148,6 +151,9 @@ def translation_semeval(input_path, out_path):
     with open(input_path, encoding="utf-8") as f:
         for line in f:
             print(doc_cnt)
+            if doc_cnt < 7279:
+                doc_cnt += 1
+                continue
             cur_data = json.loads(line)
             tokens = cur_data["token"]
             h_start = cur_data["h"]["pos"][0]
@@ -176,6 +182,7 @@ def translation_semeval(input_path, out_path):
             print(json.dumps(cur_data), file=out_file)
             doc_cnt += 1
             time.sleep(1)
+    print(error_ids)
     out_file.close()
 
 
@@ -184,4 +191,4 @@ if __name__ == "__main__":
     # translation_scierc("../data/scierc_sentence/dev.json", "../data/strong_scierc/dev.json")
     # translation_scierc("../data/scierc_sentence/train.json", "../data/strong_scierc/train.json")
 
-    translation_semeval("../data/semeval/semeval_train.json", "../data/strong_semeval/train.json")
+    translation_semeval("../data/processed_parse_res.json", "../data/strong_parse_res_append1.json")

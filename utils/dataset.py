@@ -60,6 +60,7 @@ class SentenceClassificationDataset(Dataset):
         self.rel2id = json.load(rel2id_file)
         rel2id_file.close()
 
+        sen_cnt = 0
         self.data = []
         with open(file_path, encoding="utf-8") as f:
             for line in f:
@@ -80,6 +81,8 @@ class SentenceClassificationDataset(Dataset):
                 cur_data["ids"], cur_data["mask"] = tokenizer.tokenize(cur_data["token"])
                 cur_data["label"] = self.rel2id[cur_data["relation"]]
 
+                cur_data["sen_idx"] = sen_cnt
+                sen_cnt += 1
                 self.data.append(cur_data)
 
     def __getitem__(self, idx):
@@ -109,23 +112,25 @@ def collate_fn_semeval(batch):
     ids = []
     masks = []
     label = []
+    res = {"sen_idx": [], "ids": [], "masks": [], "label": []}
     for item in batch:
-        ids.append(item["ids"])
-        masks.append(item["mask"])
-        label.append(item["label"])
-    ids = torch.tensor(ids, dtype=torch.long)
-    masks = torch.tensor(masks, dtype=torch.long)
-    label = torch.tensor(label, dtype=torch.long)
-    return ids, masks, label
+        res["sen_idx"].append(item["sen_idx"])
+        res["ids"].append(item["ids"])
+        res["masks"].append(item["mask"])
+        res["label"].append(item["label"])
+    for k in res:
+        res[k] = torch.tensor(res[k], dtype=torch.long)
+    return res
 
 
 def collate_fn_ssl_semeval(batch):
     strong_data, weak_data = zip(*batch)
-    strong_ids, strong_masks, strong_label = collate_fn_semeval(strong_data)
-    weak_ids, weak_masks, weak_label = collate_fn_semeval(weak_data)
-    ssl_ids = torch.cat((strong_ids, weak_ids), dim=0)
-    ssl_masks = torch.cat((strong_masks, weak_masks), dim=0)
-    return ssl_ids, ssl_masks
+    strong_res = collate_fn_semeval(strong_data)
+    weak_res = collate_fn_semeval(weak_data)
+    ssl_res = {"ids": [], "masks": []}
+    ssl_res["ids"] = torch.cat((strong_res["ids"], weak_res["ids"]), dim=0)
+    ssl_res["masks"] = torch.cat((strong_res["masks"], weak_res["masks"]), dim=0)
+    return ssl_res
 
 def collate_fn_mt_semeval(batch):
     ids = []
